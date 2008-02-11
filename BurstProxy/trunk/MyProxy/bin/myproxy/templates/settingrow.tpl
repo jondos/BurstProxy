@@ -1,0 +1,1 @@
+<input type="radio" name="$NAME" value="$VALUE" $CHECKED>$TEXT<br>
