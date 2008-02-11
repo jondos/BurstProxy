@@ -66,6 +66,8 @@ public final class UserSettings extends Settings
 	public static final String PREFETCHING_DEFAULT_REMOTE_ADDRESS = "";
 	
 	public static final int MAX_JARSIZE = 20;
+	
+	public static final int DEFAULT_THREADPOOL_SIZE = 15;
 
 	private final File _configDir;
 	private final CookieHostList _cookieHosts, _sessionCookies, _cookieExceptions;
