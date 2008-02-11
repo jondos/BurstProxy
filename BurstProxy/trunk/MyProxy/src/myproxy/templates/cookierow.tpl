@@ -1,1 +1,0 @@
-<tr><td>$PATTERN</td><td align="center">$EXACTMATCH</td><td align="center"><input type="checkbox" name="id" value="$ID"></td></tr>

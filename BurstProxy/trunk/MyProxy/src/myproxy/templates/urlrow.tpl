@@ -1,1 +1,0 @@
-<tr><td>$HOSTPART</td><td>$PATHPART</td><td>$COMMENT</td><td align="center"><input type="checkbox" name="id" value="$ID"></td><td align="center"><a href="$ACTION?edit=$ID" class="local">$TPL_EDIT</a></td></tr>
