@@ -395,8 +395,8 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 					ph = new PrefetchingHandler(_controller, getName(), pe, nextPrefetchingHandlerId++);
 					
 					entityHandlers.add(ph);
-					
-					new Thread(ph).start();
+					_controller.work(ph);
+					//new Thread(ph).start();
 				} catch (URIFormatException e) {
 					e.printStackTrace();
 				}
