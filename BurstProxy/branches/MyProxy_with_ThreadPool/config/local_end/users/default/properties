@@ -1,6 +1,0 @@
-#MyProxy Properties
-#Mon Jan 14 11:54:31 CET 2008
-prefetching.value=1
-referer.level=0
-prefetching.remoteaddress=localhost\:8082
-threadpool.size=10
