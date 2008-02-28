@@ -36,7 +36,7 @@ import myproxy.httpio.URIParser;
 
 /**
  * @author dh
- * test
+ *
  */
 public abstract class AbstractRequestHandler implements RequestHandler
 {
