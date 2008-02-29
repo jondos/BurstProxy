@@ -67,7 +67,6 @@ public class LocalPrefetchRequestHandler extends AbstractRequestHandler
 		}
 		
 		PrefetchedEntityStore entityStore = PrefetchedEntityStore.getInstance();
-		entityStore.weedStore();
 		
 		// fortunately, we know about embedded entities even before the browser can request them
 		if(entityStore.containsURL(_req.getURI().getSource())) {
@@ -79,6 +78,7 @@ public class LocalPrefetchRequestHandler extends AbstractRequestHandler
 		// add prefetch header so that remote end actually will perform prefetching
 		_reqHeaders.put("X-Accept-Prefetching", "toptobottom"); //HE=gzip,BE=gzip
 		//_reqHeaders.put("Accept-Encoding", "");		
+		_reqHeaders.put("Connection", "close");
 		boolean expectContinue = false;
 		
 		// check for 100-continue
@@ -451,8 +451,8 @@ public class LocalPrefetchRequestHandler extends AbstractRequestHandler
 		
 		// close connection to remote end when the blob has been received completely
 		// TODO: does this work?
-		if(!_server.keepConnection() || _res.compareVersion(1, 1) < 0)
-			_server.safeClose();
+		//if(!_server.keepConnection() || _res.compareVersion(1, 1) < 0)
+		_server.safeClose();
 	}
 
 	private void handleAlreadyPrefetchedEntity(String url) throws IOException {
