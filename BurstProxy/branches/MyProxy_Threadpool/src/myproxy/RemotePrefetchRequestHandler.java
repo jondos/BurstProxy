@@ -33,10 +33,12 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 	private static final int CANDIDATES_MIN_SIZE = 50 * 1024;
 	private int nextPrefetchingHandlerId;
 	private ArrayList _entityHandlers;
+	private ArrayList _embeddedEntityHandlers;
 
 	public RemotePrefetchRequestHandler(MyProxy controller, Handler handler) {
 		super(controller, handler);
 		_entityHandlers = new ArrayList();
+		_embeddedEntityHandlers = new ArrayList();
 	}
 
 	public void handleRequest() throws IOException, HTTPException, MessageFormatException {
@@ -352,10 +354,11 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 			
 			urlIterator = urlsOfEmbeddedEntities.iterator();
 			synchronized(_entityHandlers) {
+				int i=0;
 				while(urlIterator.hasNext()) {
 					String uri = (String)urlIterator.next();
 					try{
-						createNewPrefetchingHandler(uri, baseURI, null);
+						createNewPrefetchingHandler(uri, baseURI, String.valueOf(i++), false);
 					} catch (URIFormatException e) {
 						e.printStackTrace();
 					}
@@ -370,6 +373,11 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 					if( ((PrefetchingHandler)_entityHandlers.get(i)).isCompleted() == false)
 						allDone = false;
 				}
+				for(int i=0;i<_embeddedEntityHandlers.size();i++) {
+					if( ((PrefetchingHandler)_embeddedEntityHandlers.get(i)).isCompleted() == false)
+						allDone = false;
+				}
+				
 				if(allDone) break;
 				sendEntitiesToLocalEnd(doCompressHeaders,  doCompressBody,  clientChunkedOutputStream, false);
 				try {
@@ -379,6 +387,7 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 			sendEntitiesToLocalEnd(doCompressHeaders,  doCompressBody,  clientChunkedOutputStream, true);
 			// now all prefetched entities are available for transmission to the client
 			clientChunkedOutputStream.close();
+			_client.setKeepConnection(false);
 			_logger.finer(getName() + " all prefetched entities have been sent.");
 		}
 	}
@@ -388,6 +397,15 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 		ArrayList candidates = new ArrayList();
 		synchronized(_entityHandlers){
 			for(Iterator it = _entityHandlers.iterator(); it.hasNext();){
+				PrefetchingHandler entityHandler = (PrefetchingHandler) it.next();
+				if(entityHandler.isCompleted() && !entityHandler.alreadySent()){
+					candidates.add(entityHandler);
+					candidatesSize += entityHandler.getEntity().getBuffer().length;
+				}
+			}
+		}
+		synchronized(_embeddedEntityHandlers){
+			for(Iterator it = _embeddedEntityHandlers.iterator(); it.hasNext();){
 				PrefetchingHandler entityHandler = (PrefetchingHandler) it.next();
 				if(entityHandler.isCompleted() && !entityHandler.alreadySent()){
 					candidates.add(entityHandler);
@@ -495,7 +513,7 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 		return null;
 	}
 	
-	public void createNewPrefetchingHandler(String url, URIParser baseURI, String identifier) throws URIFormatException, IOException{
+	public void createNewPrefetchingHandler(String url, URIParser baseURI, String identifier, boolean embedded) throws URIFormatException, IOException{
 		// create new PrefetchedEntities and start prefetching them
 		// for now, create 1 thread for each embedded entity -- this may consume a lot of resources, though
 		
@@ -526,14 +544,21 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 			_logger.finer(getName() + " prefetching URL "+url);
 
 			PrefetchingHandler ph = new PrefetchingHandler(_controller, getName(), pe, nextPrefetchingHandlerId++, this);
-			synchronized(_entityHandlers){
-				_entityHandlers.add(ph);
+			if(embedded){
+				synchronized(_embeddedEntityHandlers){
+					_embeddedEntityHandlers.add(ph);
+				}
+			}
+			else{
+				synchronized(_entityHandlers){
+					_entityHandlers.add(ph);
+				}
 			}
 			if(identifier == null)
 				identifier = String.valueOf(_entityHandlers.size()-1);
 			ph.setIdentifier(identifier);
-			//_controller.work(ph);
-			new Thread(ph).start();
+			_controller.work(ph);
+			//new Thread(ph).start();
 		} catch (URIFormatException e) {
 			e.printStackTrace();
 		}

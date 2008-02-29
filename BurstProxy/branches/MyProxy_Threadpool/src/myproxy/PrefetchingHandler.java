@@ -119,7 +119,7 @@ public class PrefetchingHandler implements Runnable {
 					String uri = (String)urlIterator.next();
 					try{
 						_logger.finer(getName() + " prefetching in Prefetched Entity " + uri);
-						_parent.createNewPrefetchingHandler(uri ,baseURI, uri);
+						_parent.createNewPrefetchingHandler(uri ,baseURI, uri, true);
 					} catch (URIFormatException e) {
 						e.printStackTrace();
 					}
@@ -136,7 +136,9 @@ public class PrefetchingHandler implements Runnable {
 		}
 
 		_pe.setCompleted(true);
-		_server.safeClose();
+		//TODO 
+		//if(!_server.keepConnection() || _pe.getResponse().compareVersion(1, 1) < 0)
+			//_server.safeClose();
 		_logger.finer(getName() + " finished: " +_pe.getRequest().getURI().getSource());
 	}
 

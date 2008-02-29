@@ -39,7 +39,8 @@ public final class MyProxy implements Runnable
 	private static final long REFRESH_INTERVAL = 60 * 60 * 1000;
 	
 	private final InetSocketAddress _localAddress, _forwardAddress;
-	public final ThreadPool _threadPool;
+	//public final ThreadPool _threadPool;
+	public final WorkQueue _threadPool;
 	private final HandlerPool _handlerPool;
 	private final File _configDir;
 	private final Map _userSettings, _resources;
@@ -144,8 +145,8 @@ public final class MyProxy implements Runnable
 		_resources = new HashMap();
 		_resources.put("default.css", readFile(new File(_configDir, "default.css")));
 		_resources.put("blank.gif", readFile(new File(_configDir, "blank.gif")));
-		_threadPool = new ThreadPool("Worker", 
-				getSettings("default").getInteger("threadpool.size", UserSettings.DEFAULT_THREADPOOL_SIZE));
+		_threadPool = new WorkQueue(getSettings("default").getInteger("threadpool.size", UserSettings.DEFAULT_THREADPOOL_SIZE));
+			//new ThreadPool("Worker", getSettings("default").getInteger("threadpool.size", UserSettings.DEFAULT_THREADPOOL_SIZE));
 		_scheduler = new Scheduler();
 		_scheduler.queue(_handlerPool, System.currentTimeMillis() + HandlerPool.INTERVAL);
 		_scheduler.queue(new Cleaner(), System.currentTimeMillis() + Cleaner.INTERVAL);
@@ -312,7 +313,8 @@ public final class MyProxy implements Runnable
 	}
 	
 	public void work(Runnable target){
-		_threadPool.addRequest(target);
+		_threadPool.execute(target);
+		//_threadPool.addRequest(target);
 	}
 
 	public static void main(String[] args)
