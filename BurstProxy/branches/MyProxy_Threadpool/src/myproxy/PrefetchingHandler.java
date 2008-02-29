@@ -10,10 +10,14 @@ import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.util.Iterator;
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import myproxy.httpio.Message;
+import myproxy.httpio.MessageFormatException;
+import myproxy.httpio.URIFormatException;
+import myproxy.httpio.URIParser;
 import myproxy.prefetching.PrefetchedEntity;
 
 public class PrefetchingHandler implements Runnable {
@@ -38,13 +42,23 @@ public class PrefetchingHandler implements Runnable {
 
 	private String _error;
 
+	private boolean _alreadySent;
 
+	private String _identifier;
+
+	private RemotePrefetchRequestHandler _parent;
+	
 	public PrefetchingHandler(MyProxy controller, String handlerName, PrefetchedEntity p, int id) {
+		this(controller, handlerName, p, id, null);
+	}
+
+	public PrefetchingHandler(MyProxy controller, String handlerName, PrefetchedEntity p, int id, RemotePrefetchRequestHandler parent) {
 		_id = id;
 		_name = handlerName + "." + _id;
 		_pe = p;
 		_controller = controller;
 		_settings = controller.getSettings("default");
+		_parent = parent;
 	}
 
 
@@ -54,7 +68,15 @@ public class PrefetchingHandler implements Runnable {
 		try {
 
 			getServerConnection();
-
+			
+			// keep original request URI (will be overwritten by next statements)
+			URIParser baseURI = new URIParser();
+			try {
+				baseURI.parse(_pe.getRequest().getURI().getSource());
+			} catch(URIFormatException e) {
+				throw new MessageFormatException(e.getMessage());
+			}
+			
 			// change Request-URI to "abs_path" format, unless we're forwarding
 			if(_controller.getForwardAddress() == null)
 				_pe.getRequest().setURI(_pe.getRequest().getURI().getPathSource());
@@ -87,7 +109,22 @@ public class PrefetchingHandler implements Runnable {
 
 			// handle body
 			prefetchEntityBody();
+			List urlsOfEmbeddedEntities = null;
 
+			urlsOfEmbeddedEntities = _parent.parseDocument(_pe.getResponse().getHeaders().getValue("Content-Type"), _pe, baseURI);
+			if(urlsOfEmbeddedEntities != null) {	
+				_logger.finer(getName() + " found " +urlsOfEmbeddedEntities.size() + " urls in Prefetched Entity " + _pe.getRequest().getURI());
+				Iterator urlIterator = urlsOfEmbeddedEntities.iterator();
+				while(urlIterator.hasNext()) {
+					String uri = (String)urlIterator.next();
+					try{
+						_logger.finer(getName() + " prefetching in Prefetched Entity " + uri);
+						_parent.createNewPrefetchingHandler(uri ,baseURI, uri);
+					} catch (URIFormatException e) {
+						e.printStackTrace();
+					}
+				}
+			}
 		} catch(Exception e) {
 			_logger.logp(Level.WARNING, getName(), "PrefetchingHandler.run", e.toString());
 
@@ -313,4 +350,22 @@ public class PrefetchingHandler implements Runnable {
 			return false;
 	}
 
+
+	public boolean alreadySent() {
+		return _alreadySent;
+
+	}
+
+	public void setAreadySent(boolean sent) {
+		_alreadySent = sent;
+	}
+
+
+	public String getIdentifier() {
+		return _identifier;
+	}
+	
+	public void setIdentifier(String id){
+		_identifier = id;
+	}
 }

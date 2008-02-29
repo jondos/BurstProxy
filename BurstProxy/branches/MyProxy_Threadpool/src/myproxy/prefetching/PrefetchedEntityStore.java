@@ -51,7 +51,7 @@ public class PrefetchedEntityStore {
 		return (PrefetchedEntity) store.get(url);
 	}
 	
-	public void weedStore() {
+	public synchronized void weedStore() {
 		ArrayList toBeDeleted = new ArrayList();
 		for(Iterator i=store.values().iterator();i.hasNext();) {
 			PrefetchedEntity pe = (PrefetchedEntity)i.next();
