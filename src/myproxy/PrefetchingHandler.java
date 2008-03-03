@@ -111,14 +111,17 @@ public class PrefetchingHandler implements Runnable {
 			prefetchEntityBody();
 			List urlsOfEmbeddedEntities = null;
 
-			urlsOfEmbeddedEntities = _parent.parseDocument(_pe.getResponse().getHeaders().getValue("Content-Type"), _pe, baseURI);
+			urlsOfEmbeddedEntities = _parent.parseDocument(_pe.getResponse().getHeaders().getValue("Content-Type"), _pe, baseURI, true);
 			if(urlsOfEmbeddedEntities != null) {	
 				_logger.finer(getName() + " found " +urlsOfEmbeddedEntities.size() + " urls in Prefetched Entity " + _pe.getRequest().getFullURIPath());
 				Iterator urlIterator = urlsOfEmbeddedEntities.iterator();
 				while(urlIterator.hasNext()) {
 					String uri = (String)urlIterator.next();
+					if(uri.contains("logo.gif")){
+						int i = 0;
+					}
 					try{
-						_logger.finer(getName() + " prefetching in Prefetched Entity " + uri);
+						_logger.finer(getName() + " prefetching in " + this.getName() + ": " + uri);
 						_parent.createNewPrefetchingHandler(uri ,baseURI, uri, true);
 					} catch (URIFormatException e) {
 						e.printStackTrace();
