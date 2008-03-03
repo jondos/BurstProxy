@@ -113,7 +113,7 @@ public class PrefetchingHandler implements Runnable {
 
 			urlsOfEmbeddedEntities = _parent.parseDocument(_pe.getResponse().getHeaders().getValue("Content-Type"), _pe, baseURI);
 			if(urlsOfEmbeddedEntities != null) {	
-				_logger.finer(getName() + " found " +urlsOfEmbeddedEntities.size() + " urls in Prefetched Entity " + _pe.getRequest().getURI());
+				_logger.finer(getName() + " found " +urlsOfEmbeddedEntities.size() + " urls in Prefetched Entity " + _pe.getRequest().getFullURIPath());
 				Iterator urlIterator = urlsOfEmbeddedEntities.iterator();
 				while(urlIterator.hasNext()) {
 					String uri = (String)urlIterator.next();
