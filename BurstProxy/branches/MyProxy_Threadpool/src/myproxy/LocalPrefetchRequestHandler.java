@@ -76,7 +76,7 @@ public class LocalPrefetchRequestHandler extends AbstractRequestHandler
 		
 	
 		// add prefetch header so that remote end actually will perform prefetching
-		_reqHeaders.put("X-Accept-Prefetching", "toptobottom"); //HE=gzip,BE=gzip
+		_reqHeaders.put("X-Accept-Prefetching", "toptobottom,HE=gzip,BE=gzip");
 		//_reqHeaders.put("Accept-Encoding", "");		
 		_reqHeaders.put("Connection", "close");
 		boolean expectContinue = false;
