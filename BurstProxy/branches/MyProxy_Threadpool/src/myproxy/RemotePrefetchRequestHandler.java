@@ -8,6 +8,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.logging.Level;
@@ -32,13 +33,13 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 	private static final int CANDIDATES_MIN_COUNT = 5;
 	private static final int CANDIDATES_MIN_SIZE = 50 * 1024;
 	private int nextPrefetchingHandlerId;
-	private ArrayList _entityHandlers;
-	private ArrayList _embeddedEntityHandlers;
+	private HashMap _entityHandlers;
+	private HashMap _alreadyParsedURLs;
 
 	public RemotePrefetchRequestHandler(MyProxy controller, Handler handler) {
 		super(controller, handler);
-		_entityHandlers = new ArrayList();
-		_embeddedEntityHandlers = new ArrayList();
+		_entityHandlers = new HashMap();
+		_alreadyParsedURLs = new HashMap();
 	}
 
 	public void handleRequest() throws IOException, HTTPException, MessageFormatException {
@@ -319,7 +320,7 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 		// search for embedded objects
 		List urlsOfEmbeddedEntities = null;
 		
-		urlsOfEmbeddedEntities = parseDocument(contentType, websiteEntity, baseURI);
+		urlsOfEmbeddedEntities = parseDocument(contentType, websiteEntity, baseURI, false);
 		if(urlsOfEmbeddedEntities == null) {
 			clientChunkedOutputStream.close();
 			return;
@@ -342,15 +343,7 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 			clientChunkedOutputStream.startChunk(urllistByteArray.length, extension);
 			clientChunkedOutputStream.write(urllistByteArray);
 			clientChunkedOutputStream.endChunk();
-			clientChunkedOutputStream.flush();
-			
-			// create new PrefetchedEntities and start prefetching them
-			// for now, create 1 thread for each embedded entity -- this may consume a lot of resources, though
-			
-			// TODO: use thread pool pattern properly
-			// cf. http://www.ibm.com/developerworks/library/j-jtp0730.html
-			// and http://en.wikipedia.org/wiki/Thread_pool_pattern
-			
+			clientChunkedOutputStream.flush();			
 			
 			urlIterator = urlsOfEmbeddedEntities.iterator();
 			synchronized(_entityHandlers) {
@@ -369,12 +362,8 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 			_logger.finer(getName() + " waiting for all prefetched pending requests to complete");
 			while(true) {
 				boolean allDone = true;
-				for(int i=0;i<_entityHandlers.size();i++) {
-					if( ((PrefetchingHandler)_entityHandlers.get(i)).isCompleted() == false)
-						allDone = false;
-				}
-				for(int i=0;i<_embeddedEntityHandlers.size();i++) {
-					if( ((PrefetchingHandler)_embeddedEntityHandlers.get(i)).isCompleted() == false)
+				for(Iterator it = _entityHandlers.values().iterator(); it.hasNext();) {
+					if( ((PrefetchingHandler)it.next()).isCompleted() == false)
 						allDone = false;
 				}
 				
@@ -396,16 +385,7 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 		int candidatesSize = 0;
 		ArrayList candidates = new ArrayList();
 		synchronized(_entityHandlers){
-			for(Iterator it = _entityHandlers.iterator(); it.hasNext();){
-				PrefetchingHandler entityHandler = (PrefetchingHandler) it.next();
-				if(entityHandler.isCompleted() && !entityHandler.alreadySent()){
-					candidates.add(entityHandler);
-					candidatesSize += entityHandler.getEntity().getBuffer().length;
-				}
-			}
-		}
-		synchronized(_embeddedEntityHandlers){
-			for(Iterator it = _embeddedEntityHandlers.iterator(); it.hasNext();){
+			for(Iterator it = _entityHandlers.values().iterator(); it.hasNext();){
 				PrefetchingHandler entityHandler = (PrefetchingHandler) it.next();
 				if(entityHandler.isCompleted() && !entityHandler.alreadySent()){
 					candidates.add(entityHandler);
@@ -493,22 +473,27 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 		
 	}
 	
-	public List parseDocument(String contentType, PrefetchedEntity websiteEntity, URIParser baseURI) throws IOException{
+	public List parseDocument(String contentType, PrefetchedEntity websiteEntity, URIParser baseURI, boolean embedded) throws IOException{
 		if(contentType!=null) {
+			if(_alreadyParsedURLs.containsKey(baseURI.getSource()))
+				return null;
 			PrefetchingParser parser;
-			if(contentType.matches(".*?/html.*|.*?/xml.*|/.*?xhtml.*")) {
+			if(!embedded && contentType.matches(".*?/html.*|.*?/xml.*|/.*?xhtml.*")) {
 				parser = PrefetchUtils.getHTMLParser();
 			}
 			else if(contentType.matches((".*?/css.*"))) {
 				parser = PrefetchUtils.getCSSParser();
 			}
 			else{
-				_logger.finest("NOTHING TO PREFETCH FOR "+websiteEntity.getRequest().getFullURIPath());
+				_logger.finest("NOTHING TO PREFETCH FOR "+baseURI.getSource());
 				return null;
 			}
+			_alreadyParsedURLs.put(baseURI.getSource(), null);
 			byte[] responseBodyBufferUncompressed = websiteEntity.getBufferUncompressed();
 			String responseBody = new String(responseBodyBufferUncompressed);
-			return parser.findURLsInResponse(baseURI, responseBody);
+			List result = parser.findURLsInResponse(baseURI, responseBody);
+			if(result.size() > 0)
+				return result;
 		}
 		return null;
 	}
@@ -544,15 +529,10 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 			_logger.finer(getName() + " prefetching URL "+url);
 
 			PrefetchingHandler ph = new PrefetchingHandler(_controller, getName(), pe, nextPrefetchingHandlerId++, this);
-			if(embedded){
-				synchronized(_embeddedEntityHandlers){
-					_embeddedEntityHandlers.add(ph);
-				}
-			}
-			else{
-				synchronized(_entityHandlers){
-					_entityHandlers.add(ph);
-				}
+			synchronized(_entityHandlers){
+				if(_entityHandlers.containsKey(url))
+					return;
+				_entityHandlers.put(url, ph);
 			}
 			if(identifier == null)
 				identifier = String.valueOf(_entityHandlers.size()-1);

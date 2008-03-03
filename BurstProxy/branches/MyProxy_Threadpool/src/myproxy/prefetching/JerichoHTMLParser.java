@@ -19,7 +19,7 @@ public class JerichoHTMLParser implements PrefetchingParser {
 	
 	public List findURLsInResponse(URIParser baseUrl, String responseBody) throws MalformedURLException {
 		final List matches = new ArrayList();
-		final URL context = new URL(baseUrl.getSource());
+		URL context = new URL(baseUrl.getSource());
 		List tags;
 		URL url;
 		StartTag tag;
@@ -35,7 +35,12 @@ public class JerichoHTMLParser implements PrefetchingParser {
 			for (i=tags.iterator(); i.hasNext();) {
 				tag=(StartTag)i.next();
 				
-				if(tag.getName() == HTMLElementName.LINK) {
+				if(tag.getName() == HTMLElementName.BASE) {
+					String href = tag.getAttributeValue("href");
+					if(href != null)
+						context = new URL(href);
+				}
+				else if(tag.getName() == HTMLElementName.LINK) {
 				
 					String rel = tag.getAttributeValue("rel");
 					String type = tag.getAttributeValue("type");
