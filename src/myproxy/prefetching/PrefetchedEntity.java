@@ -42,6 +42,8 @@ public class PrefetchedEntity {
 	
 	/** Timestamp when this entity was completed */
 	private Date _completedAt;
+	
+	private boolean _alreadyParsed;
 
 	// use this constructor for PrefetchedEntities which are storage containers
 	// on the local end
@@ -140,6 +142,7 @@ public class PrefetchedEntity {
 	public void setURI(String uri) {
 		_uri = uri;
 	}
+	
 
 	public void writeChunks(InputStream in) throws IOException {
 		ChunkedInputStream  cin  = new ChunkedInputStream(in);
@@ -174,6 +177,14 @@ public class PrefetchedEntity {
 	
 	public Date getCompletedAt() {
 		return _completedAt;
+	}
+
+	public boolean isAlreadyParsed() {
+		return _alreadyParsed;
+	}
+
+	public void setAlreadyParsed(boolean prefetched) {
+		_alreadyParsed = prefetched;
 	}
 	
 

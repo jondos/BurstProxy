@@ -123,7 +123,9 @@ public final class Handler implements Runnable
 	void handleClient(Socket clientSocket) throws IOException
 	{
 		_client = new Connection(clientSocket);
-		new Thread(this, getName()).start();
+		//TODO: use thread pool here too
+		_controller.work(this);
+		//new Thread(this, getName()).start();
 	}
 	
 	/** 

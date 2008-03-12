@@ -8,6 +8,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.logging.Level;
@@ -29,11 +30,16 @@ import myproxy.prefetching.PrefetchingParser;
  */
 public class RemotePrefetchRequestHandler extends AbstractRequestHandler implements RequestHandler {
 		
+	private static final int CANDIDATES_MIN_COUNT = 5;
+	private static final int CANDIDATES_MIN_SIZE = 50 * 1024;
 	private int nextPrefetchingHandlerId;
-
+	private HashMap _entityHandlers;
+	private HashMap _alreadyParsedURLs;
 
 	public RemotePrefetchRequestHandler(MyProxy controller, Handler handler) {
 		super(controller, handler);
+		_entityHandlers = new HashMap();
+		_alreadyParsedURLs = new HashMap();
 	}
 
 	public void handleRequest() throws IOException, HTTPException, MessageFormatException {
@@ -312,38 +318,17 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 			_server.safeClose();
 		
 		// search for embedded objects
-		boolean searchForEmbeddedElements=false;
-		PrefetchingParser parser = null;
 		List urlsOfEmbeddedEntities = null;
 		
-		if(contentType!=null) {
-			if(contentType.matches(".*?/html.*|.*?/xml.*|/.*?xhtml.*")) {
-				searchForEmbeddedElements=true;
-				parser = PrefetchUtils.getHTMLParser();
-			}
-			else if(contentType.matches((".*?/css.*"))) {
-				searchForEmbeddedElements=true;
-				parser = PrefetchUtils.getCSSParser();
-			}
-			else
-				_logger.finest("NOTHING TO PREFETCH FOR "+ph.getEntity().getRequest().getFullURIPath());
-		} else {
-			// for bodyless responses (e.g. 304 Not Modified)
-			searchForEmbeddedElements=false;
-		}
-		
-		if(!searchForEmbeddedElements) {
+		urlsOfEmbeddedEntities = parseDocument(contentType, websiteEntity, baseURI, false);
+		if(urlsOfEmbeddedEntities == null) {
 			clientChunkedOutputStream.close();
 			return;
 		}
 		
 		
 		// send initial response to local end containing details about the prefetched URLs
-		if(searchForEmbeddedElements) {
-			byte[] responseBodyBufferUncompressed = websiteEntity.getBufferUncompressed();
-			String responseBody = new String(responseBodyBufferUncompressed);
-			urlsOfEmbeddedEntities = parser.findURLsInResponse(baseURI, responseBody);
-			
+		if(urlsOfEmbeddedEntities != null) {			
 			Iterator urlIterator = urlsOfEmbeddedEntities.iterator();
 			String urllistResponseBody="";
 			while(urlIterator.hasNext()) {
@@ -358,47 +343,18 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 			clientChunkedOutputStream.startChunk(urllistByteArray.length, extension);
 			clientChunkedOutputStream.write(urllistByteArray);
 			clientChunkedOutputStream.endChunk();
-			clientChunkedOutputStream.flush();
+			clientChunkedOutputStream.flush();			
 			
-			// create new PrefetchedEntities and start prefetching them
-			// for now, create 1 thread for each embedded entity -- this may consume a lot of resources, though
-			
-			// TODO: use thread pool pattern properly
-			// cf. http://www.ibm.com/developerworks/library/j-jtp0730.html
-			// and http://en.wikipedia.org/wiki/Thread_pool_pattern
-			
-			ArrayList entityHandlers = new ArrayList();
 			urlIterator = urlsOfEmbeddedEntities.iterator();
-			
-			while(urlIterator.hasNext()) {
-				String uri = (String)urlIterator.next();
-				URIParser currentURI = new URIParser();
-				currentURI.parse(uri);
-				
-				// prepare request
-				Request r;
-				try {
-					r = Request.createFromURI(uri);
-					
-					// copy headers
-					headersOut = new ByteArrayOutputStream();
-					_reqHeaders.write(headersOut);
-					headersIn = new ByteArrayInputStream(headersOut.toByteArray());
-					r.getHeaders().read(headersIn);
-					r.getHeaders().put("Referer", baseURI.getSource());
-					r.getHeaders().put("Host", currentURI.getHost());
-					
-					PrefetchedEntity pe = new PrefetchedEntity(r);
-					
-					_logger.finer(getName() + " prefetching URL "+uri);
-	
-					ph = new PrefetchingHandler(_controller, getName(), pe, nextPrefetchingHandlerId++);
-					
-					entityHandlers.add(ph);
-					
-					new Thread(ph).start();
-				} catch (URIFormatException e) {
-					e.printStackTrace();
+			synchronized(_entityHandlers) {
+				int i=0;
+				while(urlIterator.hasNext()) {
+					String uri = (String)urlIterator.next();
+					try{
+						createNewPrefetchingHandler(uri, baseURI, String.valueOf(i++), false);
+					} catch (URIFormatException e) {
+						e.printStackTrace();
+					}
 				}
 			}
 			
@@ -406,62 +362,85 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 			_logger.finer(getName() + " waiting for all prefetched pending requests to complete");
 			while(true) {
 				boolean allDone = true;
-				for(int i=0;i<entityHandlers.size();i++) {
-					if( ((PrefetchingHandler)entityHandlers.get(i)).isCompleted() == false)
+				for(Iterator it = _entityHandlers.values().iterator(); it.hasNext();) {
+					if( ((PrefetchingHandler)it.next()).isCompleted() == false)
 						allDone = false;
 				}
+				
 				if(allDone) break;
+				sendEntitiesToLocalEnd(doCompressHeaders,  doCompressBody,  clientChunkedOutputStream, false);
 				try {
 					Thread.sleep(20);
 				} catch (InterruptedException e) {}
 			}
-			
-			
+			sendEntitiesToLocalEnd(doCompressHeaders,  doCompressBody,  clientChunkedOutputStream, true);
 			// now all prefetched entities are available for transmission to the client
-			for(int i=0;i<entityHandlers.size();i++) {
-				PrefetchingHandler entityHandler = (PrefetchingHandler) entityHandlers.get(i);
-				_logger.finer(entityHandler.getName() + " sending reply to client");
-				
-				entityHandler.getEntity().getResponse().getHeaders().put("Transfer-Encoding", null);
-				entityHandler.getEntity().getResponse().getHeaders().put("Content-Length", String.valueOf(entityHandler.getEntity().getBuffer().length));
-
-				entityHeader = new ByteArrayOutputStream();
-				entityHandler.getEntity().getResponse().write(entityHeader);
-
-
-				if(doCompressHeaders) {
-					entityHeader = compressHeadersGZIP(entityHeader);
-				}
-				
-				entityHeaderSize = entityHeader.size();
-
-				extension="type=prefetched; url="+i+"; header-length="+entityHeaderSize;
-				if(doCompressHeaders) {
-					extension+=";HE=gzip";
-				}
-				
-				contentType=entityHandler.getEntity().getResponse().getHeaders().getValue("Content-Type");
-				contentEncoding=entityHandler.getEntity().getResponse().getHeaders().getValue("Content-Encoding");
-				
-				// compress body if it is not compressed already
-				responseBodyBuffer = entityHandler.getEntity().getBuffer();
-				if(doCompressBody && contentType!=null && 
-						contentType.matches(".*?/html.*|.*?/xml.*|/.*?xhtml.*|.*?css.*|.*?x-javascript.*") &&
-						(contentEncoding == null || !contentEncoding.equals("gzip"))) {
-					extension+=";BE=gzip";
-					responseBodyBuffer = compressData(responseBodyBuffer);
-				}
-
-				
-				clientChunkedOutputStream.startChunk(entityHeaderSize+responseBodyBuffer.length, extension);
-				copyStream(new ByteArrayInputStream(entityHeader.toByteArray()), clientChunkedOutputStream, entityHeaderSize);
-				copyStream(new ByteArrayInputStream(responseBodyBuffer), clientChunkedOutputStream, -1);
-				clientChunkedOutputStream.endChunk();
-			}
 			clientChunkedOutputStream.close();
+			_client.setKeepConnection(false);
 			_logger.finer(getName() + " all prefetched entities have been sent.");
 		}
-		//_client.safeClose();
+	}
+	
+	private void sendEntitiesToLocalEnd(boolean doCompressHeaders, boolean doCompressBody, ChunkedOutputStream clientChunkedOutputStream, boolean sendAnyway) throws IOException{
+		int candidatesSize = 0;
+		ArrayList candidates = new ArrayList();
+		synchronized(_entityHandlers){
+			for(Iterator it = _entityHandlers.values().iterator(); it.hasNext();){
+				PrefetchingHandler entityHandler = (PrefetchingHandler) it.next();
+				if(entityHandler.isCompleted() && !entityHandler.alreadySent()){
+					candidates.add(entityHandler);
+					candidatesSize += entityHandler.getEntity().getBuffer().length;
+				}
+			}
+		}
+		
+		if(!sendAnyway && !(candidates.size() > CANDIDATES_MIN_COUNT && candidatesSize > CANDIDATES_MIN_SIZE)){
+			return;
+		}
+		_logger.finer(getName() + " sending " + candidates.size() + " with " + candidatesSize + " bytes");
+		
+		for(Iterator it = candidates.iterator(); it.hasNext();){
+			PrefetchingHandler entityHandler = (PrefetchingHandler) it.next();
+			_logger.finer(entityHandler.getName() + " sending reply to client");
+			
+			entityHandler.getEntity().getResponse().getHeaders().put("Transfer-Encoding", null);
+			entityHandler.getEntity().getResponse().getHeaders().put("Content-Length", String.valueOf(entityHandler.getEntity().getBuffer().length));
+
+			ByteArrayOutputStream entityHeader = new ByteArrayOutputStream();
+			entityHandler.getEntity().getResponse().write(entityHeader);
+
+
+			if(doCompressHeaders) {
+				entityHeader = compressHeadersGZIP(entityHeader);
+			}
+			
+			int entityHeaderSize = entityHeader.size();
+
+			String extension = "type=prefetched; url="+entityHandler.getIdentifier()+"; header-length="+entityHeaderSize;
+			if(doCompressHeaders) {
+				extension+=";HE=gzip";
+			}
+			
+			String contentType = entityHandler.getEntity().getResponse().getHeaders().getValue("Content-Type");
+			String contentEncoding = entityHandler.getEntity().getResponse().getHeaders().getValue("Content-Encoding");
+			
+			// compress body if it is not compressed already
+			byte[] responseBodyBuffer = entityHandler.getEntity().getBuffer();
+			if(doCompressBody && contentType!=null && 
+					contentType.matches(".*?/html.*|.*?/xml.*|/.*?xhtml.*|.*?css.*|.*?x-javascript.*") &&
+					(contentEncoding == null || !contentEncoding.equals("gzip"))) {
+				extension+=";BE=gzip";
+				responseBodyBuffer = compressData(responseBodyBuffer);
+			}
+
+			clientChunkedOutputStream.startChunk(entityHeaderSize+responseBodyBuffer.length, extension);
+			copyStream(new ByteArrayInputStream(entityHeader.toByteArray()), clientChunkedOutputStream, entityHeaderSize);
+			copyStream(new ByteArrayInputStream(responseBodyBuffer), clientChunkedOutputStream, -1);
+			clientChunkedOutputStream.endChunk();	
+			entityHandler.setAreadySent(true);
+		}
+		clientChunkedOutputStream.flush();
+		_logger.finer(getName() + " candidates sent");
 	}
 
 	/**
@@ -492,5 +471,77 @@ public class RemotePrefetchRequestHandler extends AbstractRequestHandler impleme
 		compressedOutputStream.close();
 		return compressedEntityHeader;
 		
+	}
+	
+	public List parseDocument(String contentType, PrefetchedEntity websiteEntity, URIParser baseURI, boolean embedded) throws IOException{
+		if(contentType!=null) {
+			if(_alreadyParsedURLs.containsKey(baseURI.getSource()))
+				return null;
+			PrefetchingParser parser;
+			if(!embedded && contentType.matches(".*?/html.*|.*?/xml.*|/.*?xhtml.*")) {
+				parser = PrefetchUtils.getHTMLParser();
+			}
+			else if(contentType.matches((".*?/css.*"))) {
+				parser = PrefetchUtils.getCSSParser();
+			}
+			else{
+				_logger.finest("NOTHING TO PREFETCH FOR "+baseURI.getSource());
+				return null;
+			}
+			_alreadyParsedURLs.put(baseURI.getSource(), null);
+			byte[] responseBodyBufferUncompressed = websiteEntity.getBufferUncompressed();
+			String responseBody = new String(responseBodyBufferUncompressed);
+			List result = parser.findURLsInResponse(baseURI, responseBody);
+			if(result.size() > 0)
+				return result;
+		}
+		return null;
+	}
+	
+	public void createNewPrefetchingHandler(String url, URIParser baseURI, String identifier, boolean embedded) throws URIFormatException, IOException{
+		// create new PrefetchedEntities and start prefetching them
+		// for now, create 1 thread for each embedded entity -- this may consume a lot of resources, though
+		
+		// TODO: use thread pool pattern properly
+		// cf. http://www.ibm.com/developerworks/library/j-jtp0730.html
+		// and http://en.wikipedia.org/wiki/Thread_pool_pattern
+		
+		
+
+		URIParser currentURI = new URIParser();
+		currentURI.parse(url);
+		
+		// prepare request
+		Request r;
+		try {
+			r = Request.createFromURI(url);
+			
+			// copy headers
+			ByteArrayOutputStream headersOut = new ByteArrayOutputStream();
+			_reqHeaders.write(headersOut);
+			ByteArrayInputStream headersIn = new ByteArrayInputStream(headersOut.toByteArray());
+			r.getHeaders().read(headersIn);
+			r.getHeaders().put("Referer", baseURI.getSource());
+			r.getHeaders().put("Host", currentURI.getHost());
+			
+			PrefetchedEntity pe = new PrefetchedEntity(r);
+			
+			_logger.finer(getName() + " prefetching URL "+url);
+
+			PrefetchingHandler ph = new PrefetchingHandler(_controller, getName(), pe, nextPrefetchingHandlerId++, this);
+			synchronized(_entityHandlers){
+				if(_entityHandlers.containsKey(url))
+					return;
+				_entityHandlers.put(url, ph);
+			}
+			if(identifier == null)
+				identifier = String.valueOf(_entityHandlers.size()-1);
+			ph.setIdentifier(identifier);
+			_controller.work(ph);
+			//new Thread(ph).start();
+		} catch (URIFormatException e) {
+			e.printStackTrace();
+		}
+	
 	}
 }
