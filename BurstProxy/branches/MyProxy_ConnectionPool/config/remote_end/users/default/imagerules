@@ -1,0 +1,2 @@
+;/.+\.(?:gif|jpe?g|png) 36 Catch-all image rule
+doubleclick\.net;sz=\d+x\d+ 8
